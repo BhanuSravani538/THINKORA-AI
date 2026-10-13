@@ -16,6 +16,7 @@ export default defineConfig({
       '/api': {
         target: 'https://thinkora-ai-k7k5.onrender.com',
         changeOrigin: true,
+        secure: true,
       },
     },
   },
