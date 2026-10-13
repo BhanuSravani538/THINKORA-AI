@@ -236,7 +236,7 @@ async function seedSupabase() {
   ];
 
   for (const opt of solarOptions) {
-    const { error: optErr } = await supabase.from('decision_options').upsert(opt);
+    const { error: optErr } = await supabase.from('decision_options').upsert(opt as any);
     if (optErr) console.error(`Error seeding option ${opt.id}:`, optErr.message);
     else console.log(`✓ Seeded decision option: ${opt.name}`);
   }

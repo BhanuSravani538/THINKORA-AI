@@ -1,4 +1,4 @@
-import { parseCurrencyAmount, normalizeUnicodeText, formatCurrencyValue } from '../src/utils/currencyParser';
+import { parseCurrencyAmount, normalizeUnicodeText, formatCurrencyValue } from '../utils/currencyParser.js';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {

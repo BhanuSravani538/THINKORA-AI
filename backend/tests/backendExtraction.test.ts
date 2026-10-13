@@ -1,9 +1,15 @@
 import fs from 'fs';
-import { extractOptionsAndClaimsFromPdf } from '../server/utils/documentOptionExtractor';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { extractOptionsAndClaimsFromPdf } from '../utils/documentOptionExtractor.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function testBackendExtraction() {
   console.log('Testing backend document ingestion pipeline on actual test PDF...');
-  const buf = fs.readFileSync('sample_docs/Campus_Solar_Energy_Planning.pdf');
+  const samplePdf = path.resolve(__dirname, 'sample_docs/Campus_Solar_Energy_Planning.pdf');
+  const buf = fs.readFileSync(samplePdf);
   const result = await extractOptionsAndClaimsFromPdf(
     buf,
     'Campus_Solar_Energy_Planning.pdf',

@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { dbStore, DEFAULT_USER_ID } from '../server/db/store.js';
-import { persistUploadedFile, getStoredFileBuffer } from '../server/services/fileStorage.js';
-import { supabase } from '../server/config/supabase.js';
+import { dbStore, DEFAULT_USER_ID } from '../db/store.js';
+import { persistUploadedFile, getStoredFileBuffer } from '../services/fileStorage.js';
+import { supabase } from '../config/supabase.js';
 
 async function runPersistenceAndIsolationTests() {
   console.log('======================================================');
@@ -228,6 +228,78 @@ async function runPersistenceAndIsolationTests() {
     }
   }
   console.log('✓ Step 5 passed: Data persistence verified in database engine.\n');
+
+  // ---------------------------------------------------------------------------
+  // 6. Missing Workspace Lookup & Error Handling
+  // ---------------------------------------------------------------------------
+  console.log('Step 6: Testing missing workspace handling and access bounds...');
+  const missingWs = await dbStore.getWorkspaceById('ws-non-existent-999999', userA.id);
+  if (missingWs !== null) {
+    throw new Error('Non-existent workspace ID should return null');
+  }
+  console.log('✓ Missing workspace safely returns null without exceptions or data leakage');
+  console.log('✓ Step 6 passed: Missing workspace correctly handled.\n');
+
+  // ---------------------------------------------------------------------------
+  // 7. ws-solar-campus Default Workspace Availability & Auto-Seeding
+  // ---------------------------------------------------------------------------
+  console.log('Step 7: Testing ws-solar-campus existence, auto-seeding & universal accessibility...');
+  const solarWs = await dbStore.getWorkspaceById('ws-solar-campus', userA.id);
+  if (!solarWs) {
+    throw new Error('ws-solar-campus must exist and be accessible to authenticated users');
+  }
+  if (solarWs.domain !== 'Clean Energy & Utilities' || !solarWs.name.includes('Solar')) {
+    throw new Error(`Unexpected ws-solar-campus attributes: ${JSON.stringify(solarWs)}`);
+  }
+  console.log(`✓ ws-solar-campus found: "${solarWs.name}" (domain: ${solarWs.domain})`);
+
+  // Verify User B can also access demo workspace ws-solar-campus
+  const solarWsForB = await dbStore.getWorkspaceById('ws-solar-campus', userB.id);
+  if (!solarWsForB) {
+    throw new Error('Demo workspace ws-solar-campus should be accessible to all users');
+  }
+  console.log('✓ ws-solar-campus accessible to both User A and User B');
+  console.log('✓ Step 7 passed: ws-solar-campus persistence and access verified.\n');
+
+  // ---------------------------------------------------------------------------
+  // 8. Workspace Ownership Enforcement for PDF Upload Targets
+  // ---------------------------------------------------------------------------
+  console.log('Step 8: Testing workspace ownership check for document uploads...');
+  // User B tries to target User A's private workspace
+  const forbiddenTarget = await dbStore.getWorkspaceById(wsA.id, userB.id);
+  if (forbiddenTarget !== null) {
+    throw new Error('SECURITY VIOLATION: User B should NOT be able to target User A private workspace for upload');
+  }
+  console.log('✓ Target workspace check blocks unauthorized user from uploading to private workspace');
+  console.log('✓ Step 8 passed: Upload target authorization validated.\n');
+
+  // ---------------------------------------------------------------------------
+  // 9. Document Ingestion to ws-solar-campus
+  // ---------------------------------------------------------------------------
+  console.log('Step 9: Testing successful document ingestion into ws-solar-campus...');
+  const solarDoc = await dbStore.createDocument({
+    workspaceId: 'ws-solar-campus',
+    title: 'Solar Ingestion Test Protocol.pdf',
+    fileName: 'Solar_Ingestion_Test_Protocol.pdf',
+    fileSize: '1.2 MB',
+    fileType: 'pdf',
+    author: 'Campus Energy Auditor',
+    summary: 'Automated test upload ensuring ws-solar-campus document persistence.',
+    pages: 12,
+    status: 'completed',
+    tags: ['Solar PV', 'Verified Ingestion'],
+    extractedClaimsCount: 5,
+    contradictionsCount: 0,
+    pipelineSteps: { ocr: 'done', entityExtraction: 'done', claimTriangulation: 'done', conflictCheck: 'done' },
+    storagePath: 'ws-solar-campus/test_ingestion_protocol.pdf',
+    storageProvider: 'supabase',
+  });
+
+  if (!solarDoc || solarDoc.workspaceId !== 'ws-solar-campus') {
+    throw new Error('Document creation in ws-solar-campus failed');
+  }
+  console.log(`✓ Document "${solarDoc.title}" successfully ingested into ws-solar-campus`);
+  console.log('✓ Step 9 passed: ws-solar-campus document ingestion confirmed.\n');
 
   console.log('======================================================');
   console.log('🎉 ALL PERSISTENCE AND ISOLATION TESTS PASSED!');

@@ -1,7 +1,7 @@
-import { evaluateOption, evaluateAllOptions } from '../src/utils/decisionEngine';
-import { getCampusSolarOptions } from '../src/utils/documentOptionExtractor';
-import { MOCK_DECISION_OPTIONS, DEFAULT_CONSTRAINTS } from '../src/data/mockData';
-import { SimulationConstraints } from '../src/types';
+import { evaluateOption, evaluateAllOptions } from '../src/utils/decisionEngine.js';
+import { getCampusSolarOptions } from '../src/utils/documentOptionExtractor.js';
+import { MOCK_DECISION_OPTIONS, DEFAULT_CONSTRAINTS } from '../src/data/mockData.js';
+import { SimulationConstraints } from '../src/types/index.js';
 
 function runTests() {
   console.log('===============================================================');

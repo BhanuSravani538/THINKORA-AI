@@ -1,5 +1,5 @@
-import { evaluateSolarOptionCompleteness, evaluateCloudOptionCompleteness } from '../src/utils/evidenceCompleteness';
-import { getCampusSolarOptions } from '../src/utils/documentOptionExtractor';
+import { evaluateSolarOptionCompleteness, evaluateCloudOptionCompleteness } from '../src/utils/evidenceCompleteness.js';
+import { getCampusSolarOptions } from '../src/utils/documentOptionExtractor.js';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {

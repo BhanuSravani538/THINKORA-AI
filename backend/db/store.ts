@@ -306,6 +306,127 @@ export const dbStore = {
     };
   },
 
+  /**
+   * Ensures default demonstration workspaces and user exist in persistent database.
+   */
+  async ensureDefaultWorkspaces(): Promise<void> {
+    // 1. Ensure in-memory defaults always populated
+    if (!memoryUsers.has(DEFAULT_USER_ID)) {
+      memoryUsers.set(DEFAULT_USER_ID, {
+        id: DEFAULT_USER_ID,
+        email: 'architect@veritygraph.ai',
+        passwordHash: '$2b$10$vlSXHURM4PnJs.d.iHKMBO5JR6ossVb4WBraLVF7AaKqw.7NLAxF2',
+        fullName: 'Dr. Elena Rostova',
+        role: 'lead_architect',
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    if (!memoryWorkspaces.has('ws-solar-campus')) {
+      memoryWorkspaces.set('ws-solar-campus', {
+        id: 'ws-solar-campus',
+        userId: DEFAULT_USER_ID,
+        name: 'Campus Solar Energy Planning & Microgrid Feasibility',
+        description: 'Empirical techno-economic assessment evaluating monocrystalline rooftop, bifacial canopy, and thin-film arrays for university net-zero transition.',
+        domain: 'Clean Energy & Utilities',
+        status: 'decision_ready',
+        decisionGoal: 'Select optimal solar PV candidate balancing $140,000 budget, 9,000 sq ft roof space limit, and 650 kWh/day minimum energy demand.',
+        confidenceGrade: 'A',
+        completionPercentage: 92,
+        tags: ['Solar PV', 'Clean Energy', 'Campus Microgrid', 'CapEx'],
+        documentsCount: 2,
+        claimsCount: 16,
+        contradictionsCount: 1,
+        createdAt: '2026-10-10T00:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (!memoryWorkspaces.has(DEFAULT_WORKSPACE_ID)) {
+      memoryWorkspaces.set(DEFAULT_WORKSPACE_ID, {
+        id: DEFAULT_WORKSPACE_ID,
+        userId: DEFAULT_USER_ID,
+        name: 'Enterprise Cloud Migration & AI Inference Infrastructure',
+        description: 'Evidence-based architectural evaluation comparing multi-region serverless, hybrid Kubernetes bare-metal, and sovereign colocation for 85M daily transactional events.',
+        domain: 'Enterprise Infrastructure',
+        status: 'simulated',
+        decisionGoal: 'Select runtime platform balancing <25ms p99 SLA against $140k/mo budget cap and strict SOC2/HIPAA compliance.',
+        confidenceGrade: 'A',
+        completionPercentage: 88,
+        tags: ['Cloud', 'Kubernetes', 'Serverless', 'FinOps', 'Latency-Critical'],
+        documentsCount: 6,
+        claimsCount: 34,
+        contradictionsCount: 4,
+        createdAt: '2026-09-12T00:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    // 2. Ensure in Supabase PostgreSQL
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('users').upsert(
+          {
+            id: DEFAULT_USER_ID,
+            email: 'architect@veritygraph.ai',
+            password_hash: '$2b$10$vlSXHURM4PnJs.d.iHKMBO5JR6ossVb4WBraLVF7AaKqw.7NLAxF2',
+            full_name: 'Dr. Elena Rostova',
+            role: 'lead_architect',
+          },
+          { onConflict: 'id' }
+        );
+
+        const defaults = [
+          {
+            id: 'ws-solar-campus',
+            user_id: DEFAULT_USER_ID,
+            name: 'Campus Solar Energy Planning & Microgrid Feasibility',
+            description: 'Empirical techno-economic assessment evaluating monocrystalline rooftop, bifacial canopy, and thin-film arrays for university net-zero transition.',
+            domain: 'Clean Energy & Utilities',
+            status: 'decision_ready',
+            decision_goal: 'Select optimal solar PV candidate balancing $140,000 budget, 9,000 sq ft roof space limit, and 650 kWh/day minimum energy demand.',
+            confidence_grade: 'A',
+            completion_percentage: 92,
+            tags: ['Solar PV', 'Clean Energy', 'Campus Microgrid', 'CapEx'],
+            documents_count: 2,
+            claims_count: 16,
+            contradictions_count: 1,
+          },
+          {
+            id: DEFAULT_WORKSPACE_ID,
+            user_id: DEFAULT_USER_ID,
+            name: 'Enterprise Cloud Migration & AI Inference Infrastructure',
+            description: 'Evidence-based architectural evaluation comparing multi-region serverless, hybrid Kubernetes bare-metal, and sovereign colocation for 85M daily transactional events.',
+            domain: 'Enterprise Infrastructure',
+            status: 'simulated',
+            decision_goal: 'Select runtime platform balancing <25ms p99 SLA against $140k/mo budget cap and strict SOC2/HIPAA compliance.',
+            confidence_grade: 'A',
+            completion_percentage: 88,
+            tags: ['Cloud', 'Kubernetes', 'Serverless', 'FinOps', 'Latency-Critical'],
+            documents_count: 6,
+            claims_count: 34,
+            contradictions_count: 4,
+          },
+        ];
+
+        for (const ws of defaults) {
+          await supabase.from('research_workspaces').upsert(ws, { onConflict: 'id' });
+        }
+      } catch (err: any) {
+        console.warn('⚠️ Supabase ensureDefaultWorkspaces warning:', err?.message || err);
+      }
+    }
+  },
+
+  /**
+   * Initializes persistent database and ensures default demo state.
+   */
+  async initStore(): Promise<void> {
+    const conn = await dbStore.testConnection();
+    console.log(`📡 Database provider: ${conn.provider} (${conn.connected ? 'Connected' : 'Disconnected'})`);
+    await dbStore.ensureDefaultWorkspaces();
+  },
+
   // ---------------------------------------------------------------------------
   // USERS
   // ---------------------------------------------------------------------------
@@ -432,12 +553,8 @@ export const dbStore = {
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        if (isMissingTableError(error)) {
-          // Fall through
-        } else {
-          console.error('Supabase listWorkspaces error:', error.message);
-          throw new Error(`Database error listing workspaces: ${error.message}`);
-        }
+        console.warn('⚠️ Supabase listWorkspaces error, falling back to local memory store:', error.message);
+        // Fall through to memory
       } else {
         return (data || []).map((d: any) => ({
           id: d.id,
@@ -466,11 +583,24 @@ export const dbStore = {
 
   async getWorkspaceById(id: string, requestingUserId?: string): Promise<WorkspaceRecord | null> {
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('research_workspaces')
         .select('*')
         .eq('id', id)
         .maybeSingle();
+
+      if (!data && (id === 'ws-solar-campus' || id === DEFAULT_WORKSPACE_ID)) {
+        await dbStore.ensureDefaultWorkspaces();
+        const retry = await supabase
+          .from('research_workspaces')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
+        if (retry.data) {
+          data = retry.data;
+          error = retry.error;
+        }
+      }
 
       if (error) {
         if (isMissingTableError(error)) {

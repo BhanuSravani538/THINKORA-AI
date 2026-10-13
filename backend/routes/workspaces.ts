@@ -226,7 +226,11 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const workspaceId = req.params.id as string;
-      const ws = await dbStore.getWorkspaceById(workspaceId, req.user!.userId);
+      let ws = await dbStore.getWorkspaceById(workspaceId, req.user!.userId);
+      if (!ws && (workspaceId === 'ws-solar-campus' || workspaceId === 'ws-cloud-arch')) {
+        await dbStore.ensureDefaultWorkspaces();
+        ws = await dbStore.getWorkspaceById(workspaceId, req.user!.userId);
+      }
       if (!ws) {
         throw new AppError(`Workspace with ID ${workspaceId} was not found or access is unauthorized.`, 404);
       }

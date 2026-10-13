@@ -11,20 +11,21 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+frontend/dist
 *.local
 
 # Environment and sensitive keys
 .env
 .env.*
 !.env.example
-server/.env
-server/.env.*
-!server/.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
 
 # Local storage and persistent uploads
 uploads/
-server/uploads/
-server/data/local_db.json
+backend/uploads/
+backend/data/local_db.json
 
 # Editor directories and files
 .vscode/*

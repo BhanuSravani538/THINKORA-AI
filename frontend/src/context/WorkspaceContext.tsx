@@ -26,7 +26,7 @@ interface WorkspaceContextType {
   activeWorkspaceId: string;
   activeWorkspace: ResearchWorkspace;
   setActiveWorkspaceId: (id: string) => void;
-  createWorkspace: (workspace: Omit<ResearchWorkspace, 'id' | 'createdAt' | 'lastActive' | 'documentsCount' | 'claimsCount' | 'contradictionsCount' | 'completionPercentage' | 'confidenceGrade'>) => void;
+  createWorkspace: (workspace: Omit<ResearchWorkspace, 'id' | 'createdAt' | 'lastActive' | 'documentsCount' | 'claimsCount' | 'contradictionsCount' | 'completionPercentage' | 'confidenceGrade'>) => Promise<ResearchWorkspace> | void;
 
   documents: DocumentItem[];
   addDocument: (doc: Omit<DocumentItem, 'id' | 'uploadDate' | 'status' | 'pipelineSteps' | 'extractedClaimsCount' | 'contradictionsCount'>) => Promise<DocumentItem>;
@@ -71,6 +71,26 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [activities, setActivities] = useState<ActivityItem[]>(MOCK_ACTIVITIES);
   const [selectedOptionId, setSelectedOptionId] = useState<string>('opt-solar-a');
   const [globalSearch, setGlobalSearch] = useState<string>('');
+
+  // Synchronize available workspaces from backend on mount
+  useEffect(() => {
+    let isMounted = true;
+    api.listWorkspaces()
+      .then(remoteWorkspaces => {
+        if (!isMounted || !remoteWorkspaces || remoteWorkspaces.length === 0) return;
+        setWorkspaces(prev => {
+          const remoteIds = new Set(remoteWorkspaces.map(w => w.id));
+          const uniqueLocal = prev.filter(w => !remoteIds.has(w.id));
+          return [...remoteWorkspaces, ...uniqueLocal];
+        });
+      })
+      .catch(err => {
+        console.warn('Backend workspaces sync skipped (offline or initial boot):', err?.message);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const activeWorkspace = useMemo(() => {
     return (
@@ -218,7 +238,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActivities(prev => [newItem, ...prev.slice(0, 19)]);
   };
 
-  const createWorkspace = (
+  const createWorkspace = async (
     data: Omit<
       ResearchWorkspace,
       | 'id'
@@ -230,10 +250,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       | 'completionPercentage'
       | 'confidenceGrade'
     >
-  ) => {
-    const newWs: ResearchWorkspace = {
+  ): Promise<ResearchWorkspace> => {
+    const tempId = `ws-${Date.now()}`;
+    const optimisticWs: ResearchWorkspace = {
       ...data,
-      id: `ws-${Date.now()}`,
+      id: tempId,
       createdAt: new Date().toISOString().split('T')[0],
       lastActive: 'Just now',
       completionPercentage: 10,
@@ -242,18 +263,51 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       claimsCount: 0,
       contradictionsCount: 0,
     };
-    setWorkspaces(prev => [newWs, ...prev]);
-    setActiveWorkspaceId(newWs.id);
 
-    addActivity({
-      type: 'matrix_updated',
-      title: `Created workspace: ${newWs.name}`,
-      description: `New research workspace initialized under domain "${newWs.domain}".`,
-      workspaceId: newWs.id,
-      workspaceName: newWs.name,
-      severity: 'success',
-    });
+    try {
+      const serverWs = await api.createWorkspace({
+        name: data.name,
+        domain: data.domain,
+        description: data.description,
+        decisionGoal: data.decisionGoal,
+        status: data.status,
+        tags: data.tags,
+      });
+
+      setWorkspaces(prev => {
+        const filtered = prev.filter(w => w.id !== serverWs.id);
+        return [serverWs, ...filtered];
+      });
+      setActiveWorkspaceId(serverWs.id);
+
+      addActivity({
+        type: 'matrix_updated',
+        title: `Created workspace: ${serverWs.name}`,
+        description: `New research workspace initialized under domain "${serverWs.domain}" and persisted to database.`,
+        workspaceId: serverWs.id,
+        workspaceName: serverWs.name,
+        severity: 'success',
+      });
+
+      return serverWs;
+    } catch (err: any) {
+      console.warn('⚠️ Could not persist workspace to backend API, falling back to local state:', err?.message || err);
+      setWorkspaces(prev => [optimisticWs, ...prev]);
+      setActiveWorkspaceId(optimisticWs.id);
+
+      addActivity({
+        type: 'matrix_updated',
+        title: `Created workspace: ${optimisticWs.name}`,
+        description: `New research workspace initialized under domain "${optimisticWs.domain}" (offline mode).`,
+        workspaceId: optimisticWs.id,
+        workspaceName: optimisticWs.name,
+        severity: 'info',
+      });
+
+      return optimisticWs;
+    }
   };
+
 
   const addDocument = async (
     docData: Omit<

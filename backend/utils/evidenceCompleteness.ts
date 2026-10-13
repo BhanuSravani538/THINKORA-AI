@@ -103,91 +103,89 @@ export function evaluateSolarOptionCompleteness(
       importanceExplanation:
         'Without verified installation CapEx, Total Cost of Ownership (TCO) and ROI cannot be computed. Cannot be ranked reliably against budget limits.',
       recommendation:
-        'Obtain formal vendor bid or engineering cost estimate before evaluating commercial feasibility.',
+        'Request binding engineering and procurement quote from local certified solar contractor before ranking.',
       confidenceScore: 0,
     });
   }
 
-  // 2. Required Roof Space
+  // 2. Usable Roof Area / Space
   if (option.roofSpaceRequired !== null && option.roofSpaceRequired !== undefined) {
-    const rawQuote = isSolarA
-      ? 'Solar A n4 lakh 800 sq. ft. 80 kWh/day'
-      : isSolarB
-      ? 'Solar B n6 lakh 600 sq. ft. 110 kWh/day'
-      : 'Solar C Not reported 900 sq. ft. 95 kWh/day';
-
     criteria.push({
       id: 'roof_space',
-      label: 'Required Roof Space',
+      label: 'Usable Roof Area (Spatial Footprint)',
       category: 'critical',
       isCritical: true,
       status: 'available_source_linked',
       statusLabel: 'Available and Source-Linked',
       extractedValue: `${option.roofSpaceRequired} sq. ft.`,
       unit: 'sq. ft.',
-      rawSourcePassage: rawQuote,
+      rawSourcePassage: isSolarA
+        ? 'Solar A n4 lakh 800 sq. ft. 80 kWh/day'
+        : isSolarB
+        ? 'Solar B n6 lakh 600 sq. ft. 110 kWh/day'
+        : 'Solar C Not reported 900 sq. ft. 95 kWh/day',
       sourceDocument: docTitle,
       sourceSection: 'Table 1: Comparative Solar Assessment',
       pageNumber: 1,
       importanceExplanation:
-        'Rooftop physical footprint must fit within unobstructed building structural surface area and comply with fire access setbacks.',
-      confidenceScore: 98,
+        'Rooftop physical boundaries constrain maximum module count, walkway clearances, and structural ballast load limits.',
+      confidenceScore: 95,
     });
   } else {
     criteria.push({
       id: 'roof_space',
-      label: 'Required Roof Space',
+      label: 'Usable Roof Area (Spatial Footprint)',
       category: 'critical',
       isCritical: true,
       status: 'missing_information',
       statusLabel: 'Missing Information',
       extractedValue: null,
-      unit: 'sq. ft.',
-      importanceExplanation:
-        'Spatial dimensions are required to determine physical feasibility on available campus roofs.',
-      recommendation: 'Perform structural rooftop survey and usable area mapping.',
+      sourceDocument: docTitle,
+      sourceSection: 'Table 1: Comparative Solar Assessment',
+      pageNumber: 1,
+      importanceExplanation: 'Spatial footprint unknown; risk of roof space overload or structural non-compliance.',
+      recommendation: 'Perform structural roof survey and drone layout mapping.',
       confidenceScore: 0,
     });
   }
 
   // 3. Daily Energy Output
   if (option.dailyEnergyOutput !== null && option.dailyEnergyOutput !== undefined) {
-    const rawQuote = isSolarA
-      ? 'Solar A n4 lakh 800 sq. ft. 80 kWh/day'
-      : isSolarB
-      ? 'Solar B n6 lakh 600 sq. ft. 110 kWh/day'
-      : 'Solar C Not reported 900 sq. ft. 95 kWh/day';
-
     criteria.push({
-      id: 'daily_energy',
-      label: 'Daily Energy Output',
+      id: 'daily_energy_output',
+      label: 'Estimated Daily Generation',
       category: 'critical',
       isCritical: true,
       status: 'available_source_linked',
       statusLabel: 'Available and Source-Linked',
       extractedValue: `${option.dailyEnergyOutput} kWh/day`,
       unit: 'kWh/day',
-      rawSourcePassage: rawQuote,
+      rawSourcePassage: isSolarA
+        ? 'Solar A n4 lakh 800 sq. ft. 80 kWh/day'
+        : isSolarB
+        ? 'Solar B n6 lakh 600 sq. ft. 110 kWh/day'
+        : 'Solar C Not reported 900 sq. ft. 95 kWh/day',
       sourceDocument: docTitle,
       sourceSection: 'Table 1: Comparative Solar Assessment',
       pageNumber: 1,
       importanceExplanation:
-        'Determines baseline kWh generation to offset campus grid electricity tariffs and offset campus carbon emissions.',
-      confidenceScore: 95,
+        'Daily generation determines utility grid offset, carbon reduction credits, and facility energy independence.',
+      confidenceScore: 94,
     });
   } else {
     criteria.push({
-      id: 'daily_energy',
-      label: 'Daily Energy Output',
+      id: 'daily_energy_output',
+      label: 'Estimated Daily Generation',
       category: 'critical',
       isCritical: true,
       status: 'missing_information',
       statusLabel: 'Missing Information',
       extractedValue: null,
-      unit: 'kWh/day',
-      importanceExplanation:
-        'Daily energy output determines whether the installation meets the minimum campus energy requirement.',
-      recommendation: 'Conduct solar irradiance modeling to simulate daily output.',
+      sourceDocument: docTitle,
+      sourceSection: 'Table 1: Comparative Solar Assessment',
+      pageNumber: 1,
+      importanceExplanation: 'Cannot determine if facility baseline energy demands can be satisfied.',
+      recommendation: 'Calculate kilowatt-hour production using NREL PVWatts solar model for exact coordinates.',
       confidenceScore: 0,
     });
   }
@@ -195,56 +193,56 @@ export function evaluateSolarOptionCompleteness(
   // 4. Seasonal Generation Variability
   criteria.push({
     id: 'seasonal_variability',
-    label: 'Seasonal Generation Variability',
+    label: 'Seasonal Generation Modeling',
     category: 'important',
     isCritical: false,
     status: 'missing_information',
     statusLabel: 'Missing Information',
     extractedValue: null,
     rawSourcePassage:
-      'Potential Evidence Gap: The document does not provide installation location, seasonal generation variation, maintenance costs, equipment lifetime, warranty terms, or independently verified measurements.',
+      'Potential Evidence Gap: ...seasonal generation variation, maintenance costs, equipment lifetime, warranty terms...',
     sourceDocument: docTitle,
     sourceSection: 'Potential Evidence Gap & Limitations',
     pageNumber: 1,
     importanceExplanation:
-      'Solar irradiance drops significantly during winter and monsoon months. Average daily figures do not capture seasonal generation swings, risking power deficits.',
+      'Monsoon and winter solar irradiance variances (up to 40% drops) affect monthly utility offsets and peak grid demand charges.',
     recommendation:
-      'Obtain location-specific seasonal generation estimates (e.g. PVWatts or NREL SAM hourly simulation) before committing procurement funds.',
+      'Generate month-by-month hourly irradiation curves using NREL PVWatts or Solargis before finalizing battery sizing.',
     confidenceScore: 0,
   });
 
-  // 5. Maintenance Costs (O&M)
+  // 5. Operations & Maintenance (O&M) Costs
   criteria.push({
     id: 'maintenance_costs',
-    label: 'Maintenance Costs (O&M)',
+    label: 'Annual Operations & Maintenance (O&M)',
+    category: 'important',
+    isCritical: false,
+    status: 'missing_information',
+    statusLabel: 'Missing Information',
+    extractedValue: null,
+    rawSourcePassage:
+      'Potential Evidence Gap: ...maintenance costs, equipment lifetime, warranty terms, or independently verified measurements.',
+    sourceDocument: docTitle,
+    sourceSection: 'Potential Evidence Gap & Limitations',
+    pageNumber: 1,
+    importanceExplanation:
+      'Scheduled panel cleaning, inverter diagnostics, and vegetation control constitute recurring annual expenditure (~1-2% of CapEx).',
+    recommendation:
+      'Obtain multi-year SLA preventative maintenance contract quotes from certified service vendors.',
+    confidenceScore: 0,
+  });
+
+  // 6. Equipment Lifetime & Inverter Replacement
+  criteria.push({
+    id: 'equipment_lifetime',
+    label: 'Equipment Rated Lifespan',
     category: 'operational',
     isCritical: false,
     status: 'missing_information',
     statusLabel: 'Missing Information',
     extractedValue: null,
     rawSourcePassage:
-      'Potential Evidence Gap: ...maintenance costs, equipment lifetime, warranty terms, or independently verified measurements.',
-    sourceDocument: docTitle,
-    sourceSection: 'Potential Evidence Gap & Limitations',
-    pageNumber: 1,
-    importanceExplanation:
-      'Routine panel cleaning, electrical testing, and inverter servicing typically total 1-2% of CapEx annually, altering long-term life-cycle cost.',
-    recommendation:
-      'Request comprehensive Operations & Maintenance (O&M) service level agreements and scheduled replacement rates from shortlisted vendors.',
-    confidenceScore: 0,
-  });
-
-  // 6. Equipment Lifespan
-  criteria.push({
-    id: 'equipment_lifespan',
-    label: 'Equipment Lifespan & Durability',
-    category: 'important',
-    isCritical: false,
-    status: 'missing_information',
-    statusLabel: 'Missing Information',
-    extractedValue: null,
-    rawSourcePassage:
-      'Potential Evidence Gap: ...maintenance costs, equipment lifetime, warranty terms, or independently verified measurements.',
+      'Potential Evidence Gap: ...equipment lifetime, warranty terms, or independently verified measurements.',
     sourceDocument: docTitle,
     sourceSection: 'Potential Evidence Gap & Limitations',
     pageNumber: 1,

@@ -5,11 +5,42 @@ import { supabase, isSupabaseConfigured } from '../config/supabase.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOADS_DIR = path.resolve(__dirname, '../../uploads');
+const UPLOADS_DIR = path.resolve(__dirname, '../uploads');
 
 // Ensure local uploads directory exists
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+/**
+ * Ensures the persistent Supabase Storage bucket 'evidence-documents' exists.
+ */
+export async function ensureEvidenceBucket(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  try {
+    const { data: buckets, error: listErr } = await supabase.storage.listBuckets();
+    if (listErr) {
+      console.warn('⚠️ Could not list Supabase storage buckets:', listErr.message);
+      return false;
+    }
+    const exists = buckets?.some(b => b.name === 'evidence-documents');
+    if (!exists) {
+      const { error: createErr } = await supabase.storage.createBucket('evidence-documents', {
+        public: true,
+        fileSizeLimit: 52428800, // 50MB
+        allowedMimeTypes: ['application/pdf'],
+      });
+      if (createErr) {
+        console.warn('⚠️ Could not auto-create evidence-documents bucket in Supabase:', createErr.message);
+        return false;
+      }
+      console.log('✅ Created Supabase Storage bucket: evidence-documents');
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('⚠️ Exception verifying evidence bucket:', err?.message);
+    return false;
+  }
 }
 
 export interface StoredFileInfo {
@@ -18,6 +49,7 @@ export interface StoredFileInfo {
   storagePath: string;
   fileSizeBytes: number;
 }
+
 
 /**
  * Persists an uploaded PDF file either to Supabase Storage (if configured)
@@ -68,7 +100,7 @@ export async function persistUploadedFile(
   return {
     fileName,
     storageProvider: 'local',
-    storagePath: path.relative(path.resolve(__dirname, '../..'), localFilePath).replace(/\\/g, '/'),
+    storagePath: path.relative(path.resolve(__dirname, '..'), localFilePath).replace(/\\/g, '/'),
     fileSizeBytes: fileBuffer.length,
   };
 }
@@ -95,7 +127,7 @@ export async function getStoredFileBuffer(
   }
 
   // Read from local filesystem
-  const absolutePath = path.resolve(__dirname, '../..', storagePath);
+  const absolutePath = path.resolve(__dirname, '..', storagePath);
   if (fs.existsSync(absolutePath)) {
     return fs.readFileSync(absolutePath);
   }
