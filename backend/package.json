@@ -6,7 +6,7 @@
   "scripts": {
     "start": "tsx index.ts",
     "dev": "tsx watch index.ts",
-    "test": "tsx tests/persistenceAndIsolation.test.ts && tsx tests/backendExtraction.test.ts && tsx tests/currencyParsing.test.ts",
+    "test": "tsx tests/auth.test.ts && tsx tests/persistenceAndIsolation.test.ts && tsx tests/backendExtraction.test.ts && tsx tests/currencyParsing.test.ts",
     "seed": "tsx db/seedSupabase.ts",
     "migrate": "tsx db/migrate.ts"
   },

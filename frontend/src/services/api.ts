@@ -1,4 +1,4 @@
-import { DocumentItem, ResearchWorkspace } from '../types';
+import { DocumentItem, ResearchWorkspace, User, AuthResponse } from '../types';
 
 /**
  * Resolves the API Base URL.
@@ -6,13 +6,22 @@ import { DocumentItem, ResearchWorkspace } from '../types';
  * In production (Vercel), defaults to the deployed Render backend URL.
  */
 export function getApiBaseUrl(): string {
-  const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
+  const proc = typeof globalThis !== 'undefined' ? (globalThis as any).process : undefined;
+  const isDev = metaEnv?.DEV ?? (proc?.env?.NODE_ENV !== 'production');
+  const envUrl =
+    (metaEnv?.VITE_API_URL as string | undefined)?.trim() ||
+    (proc?.env?.VITE_API_URL as string | undefined)?.trim();
 
   // If running in development mode (localhost)
-  if (import.meta.env.DEV) {
+  if (isDev) {
     if (envUrl && (envUrl.includes('localhost') || envUrl.includes('127.0.0.1') || envUrl.startsWith('http://'))) {
       const cleanUrl = envUrl.replace(/\/+$/, '');
       return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+    }
+    // In Node test runs outside browser, default to localhost:5000/api
+    if (typeof window === 'undefined') {
+      return 'http://127.0.0.1:5000/api';
     }
     // Default to relative '/api' proxied to local backend
     return '/api';
@@ -40,7 +49,7 @@ export class ApiError extends Error {
 
 function getAuthHeaders(): Record<string, string> {
   const token =
-    typeof window !== 'undefined'
+    typeof localStorage !== 'undefined'
       ? localStorage.getItem('token') || localStorage.getItem('auth_token')
       : null;
   const headers: Record<string, string> = {};
@@ -332,4 +341,130 @@ export const api = {
       return { status: 'offline', error: err.message, apiBase };
     }
   },
+
+  /**
+   * Authenticate user with email and password
+   */
+  async login(credentials: { email: string; password: string }): Promise<AuthResponse> {
+    const apiBase = getApiBaseUrl();
+    const response = await fetch(`${apiBase}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(credentials),
+    });
+
+    const data = await parseJsonResponse(response);
+    if (!response.ok) {
+      throw new ApiError(data.error || 'Invalid email or password credentials provided.', response.status, data.details);
+    }
+
+    if (data.token) {
+      localStorage.setItem('token', data.token);
+      if (data.user) {
+        localStorage.setItem('thinkora_user', JSON.stringify(data.user));
+      }
+    }
+    return data;
+  },
+
+  /**
+   * Register a new user account
+   */
+  async register(payload: {
+    email: string;
+    password: string;
+    fullName: string;
+    role?: string;
+  }): Promise<AuthResponse> {
+    const apiBase = getApiBaseUrl();
+    const response = await fetch(`${apiBase}/auth/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await parseJsonResponse(response);
+    if (!response.ok) {
+      throw new ApiError(data.error || 'Registration failed. Please check your details.', response.status, data.details);
+    }
+
+    if (data.token) {
+      localStorage.setItem('token', data.token);
+      if (data.user) {
+        localStorage.setItem('thinkora_user', JSON.stringify(data.user));
+      }
+    }
+    return data;
+  },
+
+  /**
+   * Fetch currently authenticated user profile
+   */
+  async getCurrentUser(): Promise<User | null> {
+    const token =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('token') || localStorage.getItem('auth_token')
+        : null;
+    if (!token) return null;
+
+    const apiBase = getApiBaseUrl();
+    try {
+      const response = await fetch(`${apiBase}/auth/me`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          // Token is expired or invalid
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('token');
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('thinkora_user');
+          }
+          return null;
+        }
+        throw new ApiError('Failed to fetch user profile', response.status);
+      }
+
+      const data = await parseJsonResponse(response);
+      if (data.user) {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('thinkora_user', JSON.stringify(data.user));
+        }
+        return data.user;
+      }
+      return null;
+    } catch (err: any) {
+      // If network fails temporarily, attempt fallback to cached user
+      const cached = typeof localStorage !== 'undefined' ? localStorage.getItem('thinkora_user') : null;
+      if (cached) {
+        try {
+          return JSON.parse(cached);
+        } catch {
+          // ignore parsing error
+        }
+      }
+      return null;
+    }
+  },
+
+  /**
+   * Log out and clear stored session tokens
+   */
+  logout(): void {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('thinkora_user');
+    }
+  },
 };
+

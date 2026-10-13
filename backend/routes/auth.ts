@@ -126,12 +126,23 @@ router.post(
 // -----------------------------------------------------------------------------
 // GET /api/auth/me (Protected Profile Route)
 // -----------------------------------------------------------------------------
-router.get('/me', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const user = await dbStore.findUserById(req.user!.userId);
-    if (!user) {
-      throw new AppError('User profile not found.', 404);
+router.get(
+  '/me',
+  (req: Request, res: Response, next: NextFunction) => {
+    if (!req.headers.authorization) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized: Authentication token is required.',
+      });
     }
+    return authenticateToken(req, res, next);
+  },
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = await dbStore.findUserById(req.user!.userId);
+      if (!user) {
+        throw new AppError('User profile not found.', 404);
+      }
 
     res.status(200).json({
       success: true,

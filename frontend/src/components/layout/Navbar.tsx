@@ -11,8 +11,10 @@ import {
   AlertTriangle,
   FileText,
   Sliders,
+  LogOut,
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useAuth } from '../../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
 
 interface NavbarProps {
@@ -34,11 +36,40 @@ export const Navbar: React.FC<NavbarProps> = ({
     globalSearch,
     setGlobalSearch,
   } = useWorkspace();
+  const { user, logout } = useAuth();
 
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  const initials = user?.fullName
+    ? user.fullName
+        .split(' ')
+        .filter(Boolean)
+        .map(n => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase()
+    : 'ER';
+
+  const displayName = user?.fullName || 'Dr. E. Rostova';
+
+  const formatRole = (role?: string) => {
+    if (!role) return 'Lead Architect';
+    switch (role) {
+      case 'lead_architect':
+        return 'Lead Architect';
+      case 'researcher':
+        return 'Senior Researcher';
+      case 'compliance_officer':
+        return 'Compliance Officer';
+      case 'executive':
+        return 'Executive Stakeholder';
+      default:
+        return role;
+    }
+  };
 
   const handleUploadButtonClick = () => {
     fileInputRef.current?.click();
@@ -307,17 +338,31 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </div>
 
-        {/* User Profile Pill */}
+        {/* User Profile Pill & Sign Out Action */}
         <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white ring-2 ring-blue-500/30">
-            ER
+          <div
+            title={displayName}
+            className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white ring-2 ring-blue-500/30 shrink-0"
+          >
+            {initials}
           </div>
           <div className="hidden xl:block text-left">
-            <div className="text-xs font-semibold text-slate-200">Dr. E. Rostova</div>
+            <div className="text-xs font-semibold text-slate-200">{displayName}</div>
             <div className="text-[10px] text-blue-400 flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" /> Lead Architect
+              <ShieldCheck className="w-3 h-3 text-emerald-400" /> {formatRole(user?.role)}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              logout();
+              navigate('/login');
+            }}
+            title="Log Out of THINKORA"
+            className="p-1.5 ml-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-lg transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </header>

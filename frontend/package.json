@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "tsx tests/evidenceCompleteness.test.ts && tsx tests/decisionSimulator.test.ts",
+    "test": "tsx tests/authIntegration.test.ts && tsx tests/evidenceCompleteness.test.ts && tsx tests/decisionSimulator.test.ts",
     "lint": "oxlint"
   },
   "dependencies": {

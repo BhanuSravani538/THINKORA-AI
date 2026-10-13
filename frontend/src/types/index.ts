@@ -290,3 +290,18 @@ export interface OptionCompletenessSummary {
   summaryRecommendation: string;
 }
 
+export interface User {
+  id: string;
+  email: string;
+  fullName: string;
+  role: 'lead_architect' | 'researcher' | 'compliance_officer' | 'executive' | string;
+  createdAt?: string;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  message?: string;
+  token?: string;
+  user: User;
+}
+
