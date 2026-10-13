@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { dbStore, DEFAULT_USER_ID } from '../server/db/store.js';
 import { persistUploadedFile, getStoredFileBuffer } from '../server/services/fileStorage.js';
+import { supabase } from '../server/config/supabase.js';
 
 async function runPersistenceAndIsolationTests() {
   console.log('======================================================');
@@ -24,12 +25,28 @@ async function runPersistenceAndIsolationTests() {
   // 2. User Isolation & Access Control
   // ---------------------------------------------------------------------------
   console.log('Step 2: Testing User-Level Isolation...');
-  const testUserAId = `usr-test-alice-${Date.now()}`;
-  const testUserBId = `usr-test-bob-${Date.now()}`;
+  const timestamp = Date.now();
+  
+  // Create registered users in store
+  const userA = await dbStore.createUser({
+    email: `alice_${timestamp}@example.com`,
+    passwordHash: '$2b$10$vlSXHURM4PnJs.d.iHKMBO5JR6ossVb4WBraLVF7AaKqw.7NLAxF2',
+    fullName: 'Dr. Alice Sequencing',
+    role: 'researcher',
+  });
+
+  const userB = await dbStore.createUser({
+    email: `bob_${timestamp}@example.com`,
+    passwordHash: '$2b$10$vlSXHURM4PnJs.d.iHKMBO5JR6ossVb4WBraLVF7AaKqw.7NLAxF2',
+    fullName: 'Dr. Bob Architecture',
+    role: 'researcher',
+  });
+
+  console.log(`Created test users: User A (${userA.id}) and User B (${userB.id})`);
 
   // Create Workspace for User A
   const wsA = await dbStore.createWorkspace({
-    userId: testUserAId,
+    userId: userA.id,
     name: 'Private Genomic Research A',
     description: 'Confidential oncology biomarker sequencing',
     domain: 'BioTech & Health',
@@ -43,34 +60,34 @@ async function runPersistenceAndIsolationTests() {
   console.log(`Created private workspace for User A: ${wsA.id} (${wsA.name})`);
 
   // Verify User A can fetch it
-  const fetchByA = await dbStore.getWorkspaceById(wsA.id, testUserAId);
+  const fetchByA = await dbStore.getWorkspaceById(wsA.id, userA.id);
   if (!fetchByA) {
     throw new Error('User A should be able to fetch their own workspace');
   }
 
   // Verify User B CANNOT fetch User A's workspace
-  const fetchByB = await dbStore.getWorkspaceById(wsA.id, testUserBId);
+  const fetchByB = await dbStore.getWorkspaceById(wsA.id, userB.id);
   if (fetchByB !== null) {
     throw new Error(`SECURITY LEAK: User B was able to access User A's private workspace! Got: ${JSON.stringify(fetchByB)}`);
   }
   console.log('✓ User B access blocked for User A workspace (cross-tenant isolation confirmed)');
 
   // Verify User B CANNOT update User A's workspace
-  const updateByB = await dbStore.updateWorkspace(wsA.id, { name: 'Hacked by User B' }, testUserBId);
+  const updateByB = await dbStore.updateWorkspace(wsA.id, { name: 'Hacked by User B' }, userB.id);
   if (updateByB !== null) {
     throw new Error('SECURITY LEAK: User B was able to modify User A workspace!');
   }
   console.log('✓ User B update blocked for User A workspace');
 
   // Verify User B CANNOT delete User A's workspace
-  const deleteByB = await dbStore.deleteWorkspace(wsA.id, testUserBId);
+  const deleteByB = await dbStore.deleteWorkspace(wsA.id, userB.id);
   if (deleteByB !== false) {
     throw new Error('SECURITY LEAK: User B was able to delete User A workspace!');
   }
   console.log('✓ User B deletion blocked for User A workspace');
 
   // Verify User B workspace listing does NOT contain User A's private workspace
-  const workspacesB = await dbStore.listWorkspaces(testUserBId);
+  const workspacesB = await dbStore.listWorkspaces(userB.id);
   if (workspacesB.some(w => w.id === wsA.id)) {
     throw new Error('SECURITY LEAK: User B listWorkspaces includes User A workspace!');
   }
@@ -152,7 +169,7 @@ async function runPersistenceAndIsolationTests() {
   // Add Decision Scenario
   const newScenario = await dbStore.createScenario({
     workspaceId: wsA.id,
-    userId: testUserAId,
+    userId: userA.id,
     name: 'FY27 High-Throughput Baseline',
     description: 'Evaluating sequencer under capital constraints',
     constraints: {
@@ -166,7 +183,7 @@ async function runPersistenceAndIsolationTests() {
     simulationResults: [{ rank: 1, optionId: sampleOptions[0].id, score: 88 }],
   });
 
-  const fetchedScenarios = await dbStore.listScenarios(wsA.id, testUserAId);
+  const fetchedScenarios = await dbStore.listScenarios(wsA.id, userA.id);
   if (fetchedScenarios.length !== 1 || fetchedScenarios[0].constraints.budgetLimit !== 500000) {
     throw new Error('Scenario persistence failed');
   }
@@ -189,21 +206,28 @@ async function runPersistenceAndIsolationTests() {
   console.log('✓ Step 4 passed: Persistent file storage operational.\n');
 
   // ---------------------------------------------------------------------------
-  // 5. Backend Restart Persistence Simulation
+  // 5. Backend Restart & Database Persistence Verification
   // ---------------------------------------------------------------------------
-  console.log('Step 5: Verifying persistence across simulated backend restart...');
-  // The local database file should contain wsA
-  const localDbPath = path.resolve(process.cwd(), 'server/data/local_db.json');
-  if (fs.existsSync(localDbPath)) {
-    const raw = fs.readFileSync(localDbPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    const hasWsA = parsed.workspaces.some(([k, v]: any) => k === wsA.id);
-    if (!hasWsA) {
-      throw new Error(`local_db.json does not contain workspace ${wsA.id}!`);
+  console.log('Step 5: Verifying persistence in active storage engine...');
+  if (connStatus.provider === 'supabase' && supabase) {
+    const { data: dbWs, error: dbErr } = await supabase.from('research_workspaces').select('id, name').eq('id', wsA.id).single();
+    if (dbErr || !dbWs) {
+      throw new Error(`Workspace ${wsA.id} was not persisted in Supabase: ${dbErr?.message}`);
     }
-    console.log(`✓ Verified workspace ${wsA.id} is securely written to local_db.json on disk`);
+    console.log(`✓ Verified workspace ${wsA.id} is live and persisted in Supabase PostgreSQL: "${dbWs.name}"`);
+  } else {
+    const localDbPath = path.resolve(process.cwd(), 'server/data/local_db.json');
+    if (fs.existsSync(localDbPath)) {
+      const raw = fs.readFileSync(localDbPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      const hasWsA = parsed.workspaces.some(([k, v]: any) => k === wsA.id);
+      if (!hasWsA) {
+        throw new Error(`local_db.json does not contain workspace ${wsA.id}!`);
+      }
+      console.log(`✓ Verified workspace ${wsA.id} is securely written to local_db.json on disk`);
+    }
   }
-  console.log('✓ Step 5 passed: Data persistence survives process restart.\n');
+  console.log('✓ Step 5 passed: Data persistence verified in database engine.\n');
 
   console.log('======================================================');
   console.log('🎉 ALL PERSISTENCE AND ISOLATION TESTS PASSED!');

@@ -22,6 +22,7 @@ server/.env.*
 !server/.env.example
 
 # Local storage and persistent uploads
+uploads/
 server/uploads/
 server/data/local_db.json
 

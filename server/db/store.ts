@@ -119,6 +119,15 @@ const memoryRelationships: Map<string, EvidenceRelationshipRecord> = new Map();
 export const DEFAULT_USER_ID = 'usr-demo-rostova';
 export const DEFAULT_WORKSPACE_ID = 'ws-cloud-arch';
 
+function isMissingTableError(error: any): boolean {
+  return Boolean(
+    error &&
+    (error.code === 'PGRST205' ||
+     error.code === '42P01' ||
+     (typeof error.message === 'string' && error.message.includes('schema cache')))
+  );
+}
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -254,21 +263,45 @@ export const dbStore = {
   /**
    * Tests connectivity to configured database
    */
-  async testConnection(): Promise<{ connected: boolean; provider: string; details?: string }> {
+  async testConnection(): Promise<{ connected: boolean; provider: string; details?: string; tablesInitialized?: boolean }> {
     if (isSupabaseConfigured && supabase) {
       try {
         const { error } = await supabase.from('users').select('id').limit(1);
         if (!error) {
-          return { connected: true, provider: 'supabase', details: 'Supabase PostgreSQL connected successfully.' };
+          return {
+            connected: true,
+            provider: 'supabase',
+            tablesInitialized: true,
+            details: 'Supabase PostgreSQL connected and tables initialized.',
+          };
         }
-        return { connected: false, provider: 'supabase', details: `Supabase query failed: ${error.message}` };
+        if (isMissingTableError(error)) {
+          return {
+            connected: true,
+            provider: 'supabase',
+            tablesInitialized: false,
+            details: 'Connected to Supabase project. Tables pending creation: please execute server/db/migrations/002_persistent_storage_and_rls.sql in Supabase Dashboard SQL Editor.',
+          };
+        }
+        return {
+          connected: false,
+          provider: 'supabase',
+          tablesInitialized: false,
+          details: `Supabase query failed: ${error.message}`,
+        };
       } catch (err: any) {
-        return { connected: false, provider: 'supabase', details: `Supabase connection exception: ${err.message}` };
+        return {
+          connected: false,
+          provider: 'supabase',
+          tablesInitialized: false,
+          details: `Supabase connection exception: ${err.message}`,
+        };
       }
     }
     return {
       connected: true,
       provider: 'local_file',
+      tablesInitialized: true,
       details: `Active local file persistence at ${LOCAL_DB_PATH} (${memoryWorkspaces.size} workspaces).`,
     };
   },
@@ -285,11 +318,13 @@ export const dbStore = {
         .maybeSingle();
 
       if (error) {
-        console.error('Supabase findUserByEmail error:', error.message);
-        throw new Error(`Database error looking up user: ${error.message}`);
-      }
-
-      if (data) {
+        if (isMissingTableError(error)) {
+          // Fall through to memory
+        } else {
+          console.error('Supabase findUserByEmail error:', error.message);
+          throw new Error(`Database error looking up user: ${error.message}`);
+        }
+      } else if (data) {
         return {
           id: data.id,
           email: data.email,
@@ -298,8 +333,9 @@ export const dbStore = {
           role: data.role,
           createdAt: data.created_at,
         };
+      } else {
+        return null;
       }
-      return null;
     }
 
     for (const user of memoryUsers.values()) {
@@ -319,11 +355,13 @@ export const dbStore = {
         .maybeSingle();
 
       if (error) {
-        console.error('Supabase findUserById error:', error.message);
-        throw new Error(`Database error looking up user: ${error.message}`);
-      }
-
-      if (data) {
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase findUserById error:', error.message);
+          throw new Error(`Database error looking up user: ${error.message}`);
+        }
+      } else if (data) {
         return {
           id: data.id,
           email: data.email,
@@ -332,8 +370,9 @@ export const dbStore = {
           role: data.role,
           createdAt: data.created_at,
         };
+      } else {
+        return null;
       }
-      return null;
     }
 
     return memoryUsers.get(id) || null;
@@ -358,18 +397,22 @@ export const dbStore = {
         .single();
 
       if (error) {
-        console.error('Supabase createUser error:', error.message);
-        throw new Error(`Database error creating user: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through to local
+        } else {
+          console.error('Supabase createUser error:', error.message);
+          throw new Error(`Database error creating user: ${error.message}`);
+        }
+      } else {
+        return {
+          id: data.id,
+          email: data.email,
+          passwordHash: data.password_hash,
+          fullName: data.full_name,
+          role: data.role,
+          createdAt: data.created_at,
+        };
       }
-
-      return {
-        id: data.id,
-        email: data.email,
-        passwordHash: data.password_hash,
-        fullName: data.full_name,
-        role: data.role,
-        createdAt: data.created_at,
-      };
     }
 
     memoryUsers.set(id, newRecord);
@@ -384,33 +427,36 @@ export const dbStore = {
     if (isSupabaseConfigured && supabase) {
       let query = supabase.from('research_workspaces').select('*');
       if (userId) {
-        // Enforce user isolation, allowing demo workspace if owner is default demo
         query = query.or(`user_id.eq.${userId},user_id.eq.${DEFAULT_USER_ID}`);
       }
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Supabase listWorkspaces error:', error.message);
-        throw new Error(`Database error listing workspaces: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase listWorkspaces error:', error.message);
+          throw new Error(`Database error listing workspaces: ${error.message}`);
+        }
+      } else {
+        return (data || []).map((d: any) => ({
+          id: d.id,
+          userId: d.user_id,
+          name: d.name,
+          description: d.description,
+          domain: d.domain,
+          status: d.status,
+          decisionGoal: d.decision_goal,
+          confidenceGrade: d.confidence_grade,
+          completionPercentage: d.completion_percentage,
+          tags: d.tags || [],
+          documentsCount: d.documents_count || 0,
+          claimsCount: d.claims_count || 0,
+          contradictionsCount: d.contradictions_count || 0,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
       }
-
-      return (data || []).map((d: any) => ({
-        id: d.id,
-        userId: d.user_id,
-        name: d.name,
-        description: d.description,
-        domain: d.domain,
-        status: d.status,
-        decisionGoal: d.decision_goal,
-        confidenceGrade: d.confidence_grade,
-        completionPercentage: d.completion_percentage,
-        tags: d.tags || [],
-        documentsCount: d.documents_count || 0,
-        claimsCount: d.claims_count || 0,
-        contradictionsCount: d.contradictions_count || 0,
-        createdAt: d.created_at,
-        updatedAt: d.updated_at,
-      }));
     }
 
     return Array.from(memoryWorkspaces.values()).filter(
@@ -427,34 +473,37 @@ export const dbStore = {
         .maybeSingle();
 
       if (error) {
-        console.error('Supabase getWorkspaceById error:', error.message);
-        throw new Error(`Database error fetching workspace: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase getWorkspaceById error:', error.message);
+          throw new Error(`Database error fetching workspace: ${error.message}`);
+        }
+      } else if (data) {
+        if (requestingUserId && data.user_id !== requestingUserId && data.user_id !== DEFAULT_USER_ID) {
+          return null; // Restricted access
+        }
+
+        return {
+          id: data.id,
+          userId: data.user_id,
+          name: data.name,
+          description: data.description,
+          domain: data.domain,
+          status: data.status,
+          decisionGoal: data.decision_goal,
+          confidenceGrade: data.confidence_grade,
+          completionPercentage: data.completion_percentage,
+          tags: data.tags || [],
+          documentsCount: data.documents_count || 0,
+          claimsCount: data.claims_count || 0,
+          contradictionsCount: data.contradictions_count || 0,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
+      } else {
+        return null;
       }
-
-      if (!data) return null;
-
-      // User isolation check
-      if (requestingUserId && data.user_id !== requestingUserId && data.user_id !== DEFAULT_USER_ID) {
-        return null; // Restricted access
-      }
-
-      return {
-        id: data.id,
-        userId: data.user_id,
-        name: data.name,
-        description: data.description,
-        domain: data.domain,
-        status: data.status,
-        decisionGoal: data.decision_goal,
-        confidenceGrade: data.confidence_grade,
-        completionPercentage: data.completion_percentage,
-        tags: data.tags || [],
-        documentsCount: data.documents_count || 0,
-        claimsCount: data.claims_count || 0,
-        contradictionsCount: data.contradictions_count || 0,
-        createdAt: data.created_at,
-        updatedAt: data.updated_at,
-      };
     }
 
     const ws = memoryWorkspaces.get(id);
@@ -500,27 +549,31 @@ export const dbStore = {
         .single();
 
       if (error) {
-        console.error('Supabase createWorkspace error:', error.message);
-        throw new Error(`Database error creating workspace: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through to local
+        } else {
+          console.error('Supabase createWorkspace error:', error.message);
+          throw new Error(`Database error creating workspace: ${error.message}`);
+        }
+      } else {
+        return {
+          id: data.id,
+          userId: data.user_id,
+          name: data.name,
+          description: data.description,
+          domain: data.domain,
+          status: data.status,
+          decisionGoal: data.decision_goal,
+          confidenceGrade: data.confidence_grade,
+          completionPercentage: data.completion_percentage,
+          tags: data.tags,
+          documentsCount: 0,
+          claimsCount: 0,
+          contradictionsCount: 0,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
       }
-
-      return {
-        id: data.id,
-        userId: data.user_id,
-        name: data.name,
-        description: data.description,
-        domain: data.domain,
-        status: data.status,
-        decisionGoal: data.decision_goal,
-        confidenceGrade: data.confidence_grade,
-        completionPercentage: data.completion_percentage,
-        tags: data.tags,
-        documentsCount: 0,
-        claimsCount: 0,
-        contradictionsCount: 0,
-        createdAt: data.created_at,
-        updatedAt: data.updated_at,
-      };
     }
 
     memoryWorkspaces.set(id, newRecord);
@@ -554,27 +607,31 @@ export const dbStore = {
         .single();
 
       if (error) {
-        console.error('Supabase updateWorkspace error:', error.message);
-        throw new Error(`Database error updating workspace: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase updateWorkspace error:', error.message);
+          throw new Error(`Database error updating workspace: ${error.message}`);
+        }
+      } else {
+        return {
+          id: data.id,
+          userId: data.user_id,
+          name: data.name,
+          description: data.description,
+          domain: data.domain,
+          status: data.status,
+          decisionGoal: data.decision_goal,
+          confidenceGrade: data.confidence_grade,
+          completionPercentage: data.completion_percentage,
+          tags: data.tags || [],
+          documentsCount: data.documents_count || 0,
+          claimsCount: data.claims_count || 0,
+          contradictionsCount: data.contradictions_count || 0,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
       }
-
-      return {
-        id: data.id,
-        userId: data.user_id,
-        name: data.name,
-        description: data.description,
-        domain: data.domain,
-        status: data.status,
-        decisionGoal: data.decision_goal,
-        confidenceGrade: data.confidence_grade,
-        completionPercentage: data.completion_percentage,
-        tags: data.tags || [],
-        documentsCount: data.documents_count || 0,
-        claimsCount: data.claims_count || 0,
-        contradictionsCount: data.contradictions_count || 0,
-        createdAt: data.created_at,
-        updatedAt: data.updated_at,
-      };
     }
 
     const existing = memoryWorkspaces.get(id);
@@ -595,16 +652,24 @@ export const dbStore = {
 
   async deleteWorkspace(id: string, requestingUserId?: string): Promise<boolean> {
     if (isSupabaseConfigured && supabase) {
+      const existing = await this.getWorkspaceById(id, requestingUserId);
+      if (!existing) return false;
+
       let query = supabase.from('research_workspaces').delete().eq('id', id);
       if (requestingUserId) {
         query = query.eq('user_id', requestingUserId);
       }
-      const { error } = await query;
+      const { data, error } = await query.select();
       if (error) {
-        console.error('Supabase deleteWorkspace error:', error.message);
-        throw new Error(`Database error deleting workspace: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase deleteWorkspace error:', error.message);
+          throw new Error(`Database error deleting workspace: ${error.message}`);
+        }
+      } else {
+        return Boolean(data && data.length > 0);
       }
-      return true;
     }
 
     const existing = memoryWorkspaces.get(id);
@@ -630,29 +695,33 @@ export const dbStore = {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Supabase listDocuments error:', error.message);
-        throw new Error(`Database error listing documents: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase listDocuments error:', error.message);
+          throw new Error(`Database error listing documents: ${error.message}`);
+        }
+      } else {
+        return (data || []).map((d: any) => ({
+          id: d.id,
+          workspaceId: d.workspace_id,
+          title: d.title,
+          fileName: d.file_name,
+          fileSize: d.file_size,
+          fileType: d.file_type,
+          author: d.author,
+          summary: d.summary,
+          pages: d.pages,
+          status: d.status,
+          tags: d.tags || [],
+          extractedClaimsCount: d.extracted_claims_count || 0,
+          contradictionsCount: d.contradictions_count || 0,
+          pipelineSteps: d.pipeline_steps || { ocr: 'done', entityExtraction: 'done', claimTriangulation: 'done', conflictCheck: 'done' },
+          storagePath: d.storage_path,
+          storageProvider: d.storage_provider,
+          createdAt: d.created_at,
+        }));
       }
-
-      return (data || []).map((d: any) => ({
-        id: d.id,
-        workspaceId: d.workspace_id,
-        title: d.title,
-        fileName: d.file_name,
-        fileSize: d.file_size,
-        fileType: d.file_type,
-        author: d.author,
-        summary: d.summary,
-        pages: d.pages,
-        status: d.status,
-        tags: d.tags || [],
-        extractedClaimsCount: d.extracted_claims_count || 0,
-        contradictionsCount: d.contradictions_count || 0,
-        pipelineSteps: d.pipeline_steps || { ocr: 'done', entityExtraction: 'done', claimTriangulation: 'done', conflictCheck: 'done' },
-        storagePath: d.storage_path,
-        storageProvider: d.storage_provider,
-        createdAt: d.created_at,
-      }));
     }
 
     return Array.from(memoryDocuments.values()).filter(d => d.workspaceId === workspaceId);
@@ -692,44 +761,46 @@ export const dbStore = {
         .single();
 
       if (error) {
-        console.error('Supabase createDocument error:', error.message);
-        throw new Error(`Database error saving document: ${error.message}`);
-      }
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase createDocument error:', error.message);
+          throw new Error(`Database error saving document: ${error.message}`);
+        }
+      } else {
+        const ws = await this.getWorkspaceById(doc.workspaceId);
+        if (ws) {
+          await this.updateWorkspace(doc.workspaceId, {
+            documentsCount: ws.documentsCount + 1,
+            claimsCount: ws.claimsCount + doc.extractedClaimsCount,
+            contradictionsCount: ws.contradictionsCount + doc.contradictionsCount,
+          });
+        }
 
-      // Update workspace counts in Supabase
-      const ws = await this.getWorkspaceById(doc.workspaceId);
-      if (ws) {
-        await this.updateWorkspace(doc.workspaceId, {
-          documentsCount: ws.documentsCount + 1,
-          claimsCount: ws.claimsCount + doc.extractedClaimsCount,
-          contradictionsCount: ws.contradictionsCount + doc.contradictionsCount,
-        });
+        return {
+          id: data.id,
+          workspaceId: data.workspace_id,
+          title: data.title,
+          fileName: data.file_name,
+          fileSize: data.file_size,
+          fileType: data.file_type,
+          author: data.author,
+          summary: data.summary,
+          pages: data.pages,
+          status: data.status,
+          tags: data.tags || [],
+          extractedClaimsCount: data.extracted_claims_count || 0,
+          contradictionsCount: data.contradictions_count || 0,
+          pipelineSteps: data.pipeline_steps,
+          storagePath: data.storage_path,
+          storageProvider: data.storage_provider,
+          createdAt: data.created_at,
+        };
       }
-
-      return {
-        id: data.id,
-        workspaceId: data.workspace_id,
-        title: data.title,
-        fileName: data.file_name,
-        fileSize: data.file_size,
-        fileType: data.file_type,
-        author: data.author,
-        summary: data.summary,
-        pages: data.pages,
-        status: data.status,
-        tags: data.tags || [],
-        extractedClaimsCount: data.extracted_claims_count || 0,
-        contradictionsCount: data.contradictions_count || 0,
-        pipelineSteps: data.pipeline_steps,
-        storagePath: data.storage_path,
-        storageProvider: data.storage_provider,
-        createdAt: data.created_at,
-      };
     }
 
     memoryDocuments.set(id, newRecord);
 
-    // Increment count on memory workspace
     const ws = memoryWorkspaces.get(doc.workspaceId);
     if (ws) {
       ws.documentsCount += 1;
@@ -745,10 +816,15 @@ export const dbStore = {
     if (isSupabaseConfigured && supabase) {
       const { error } = await supabase.from('documents').delete().eq('id', id);
       if (error) {
-        console.error('Supabase deleteDocument error:', error.message);
-        throw new Error(`Database error removing document: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase deleteDocument error:', error.message);
+          throw new Error(`Database error removing document: ${error.message}`);
+        }
+      } else {
+        return true;
       }
-      return true;
     }
 
     const deleted = memoryDocuments.delete(id);
@@ -768,24 +844,28 @@ export const dbStore = {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Supabase listClaims error:', error.message);
-        throw new Error(`Database error listing claims: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase listClaims error:', error.message);
+          throw new Error(`Database error listing claims: ${error.message}`);
+        }
+      } else {
+        return (data || []).map((c: any) => ({
+          id: c.id,
+          documentId: c.document_id,
+          workspaceId: c.workspace_id,
+          statement: c.statement,
+          confidence: c.confidence,
+          evidenceType: c.evidence_type,
+          status: c.status,
+          quote: c.quote,
+          extractedDate: c.extracted_date,
+          relatedOptionId: c.related_option_id,
+          tags: c.tags || [],
+          createdAt: c.created_at,
+        }));
       }
-
-      return (data || []).map((c: any) => ({
-        id: c.id,
-        documentId: c.document_id,
-        workspaceId: c.workspace_id,
-        statement: c.statement,
-        confidence: c.confidence,
-        evidenceType: c.evidence_type,
-        status: c.status,
-        quote: c.quote,
-        extractedDate: c.extracted_date,
-        relatedOptionId: c.related_option_id,
-        tags: c.tags || [],
-        createdAt: c.created_at,
-      }));
     }
 
     return Array.from(memoryClaims.values()).filter(c => c.workspaceId === workspaceId);
@@ -815,24 +895,28 @@ export const dbStore = {
         .single();
 
       if (error) {
-        console.error('Supabase createClaim error:', error.message);
-        throw new Error(`Database error creating claim: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase createClaim error:', error.message);
+          throw new Error(`Database error creating claim: ${error.message}`);
+        }
+      } else {
+        return {
+          id: data.id,
+          documentId: data.document_id,
+          workspaceId: data.workspace_id,
+          statement: data.statement,
+          confidence: data.confidence,
+          evidenceType: data.evidence_type,
+          status: data.status,
+          quote: data.quote,
+          extractedDate: data.extracted_date,
+          relatedOptionId: data.related_option_id,
+          tags: data.tags || [],
+          createdAt: data.created_at,
+        };
       }
-
-      return {
-        id: data.id,
-        documentId: data.document_id,
-        workspaceId: data.workspace_id,
-        statement: data.statement,
-        confidence: data.confidence,
-        evidenceType: data.evidence_type,
-        status: data.status,
-        quote: data.quote,
-        extractedDate: data.extracted_date,
-        relatedOptionId: data.related_option_id,
-        tags: data.tags || [],
-        createdAt: data.created_at,
-      };
     }
 
     memoryClaims.set(id, newRecord);
@@ -852,27 +936,31 @@ export const dbStore = {
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Supabase listScenarios error:', error.message);
-        throw new Error(`Database error listing scenarios: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase listScenarios error:', error.message);
+          throw new Error(`Database error listing scenarios: ${error.message}`);
+        }
+      } else {
+        return (data || []).map((s: any) => ({
+          id: s.id,
+          workspaceId: s.workspace_id,
+          userId: s.user_id,
+          name: s.name,
+          description: s.description,
+          constraints: {
+            budgetLimit: Number(s.budget_limit),
+            maxLatencyMs: Number(s.max_latency_ms),
+            maxSpaceUnits: s.max_space_units,
+            requiredCompliance: s.required_compliance,
+            maxImplementationMonths: s.max_implementation_months,
+            priorityWeights: s.priority_weights,
+          },
+          simulationResults: s.simulation_results,
+          createdAt: s.created_at,
+        }));
       }
-
-      return (data || []).map((s: any) => ({
-        id: s.id,
-        workspaceId: s.workspace_id,
-        userId: s.user_id,
-        name: s.name,
-        description: s.description,
-        constraints: {
-          budgetLimit: Number(s.budget_limit),
-          maxLatencyMs: Number(s.max_latency_ms),
-          maxSpaceUnits: s.max_space_units,
-          requiredCompliance: s.required_compliance,
-          maxImplementationMonths: s.max_implementation_months,
-          priorityWeights: s.priority_weights,
-        },
-        simulationResults: s.simulation_results,
-        createdAt: s.created_at,
-      }));
     }
 
     return Array.from(memoryScenarios.values()).filter(
@@ -910,27 +998,31 @@ export const dbStore = {
         .single();
 
       if (error) {
-        console.error('Supabase createScenario error:', error.message);
-        throw new Error(`Database error saving scenario: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase createScenario error:', error.message);
+          throw new Error(`Database error saving scenario: ${error.message}`);
+        }
+      } else {
+        return {
+          id: data.id,
+          workspaceId: data.workspace_id,
+          userId: data.user_id,
+          name: data.name,
+          description: data.description,
+          constraints: {
+            budgetLimit: Number(data.budget_limit),
+            maxLatencyMs: Number(data.max_latency_ms),
+            maxSpaceUnits: data.max_space_units,
+            requiredCompliance: data.required_compliance,
+            maxImplementationMonths: data.max_implementation_months,
+            priorityWeights: data.priority_weights,
+          },
+          simulationResults: data.simulation_results,
+          createdAt: data.created_at,
+        };
       }
-
-      return {
-        id: data.id,
-        workspaceId: data.workspace_id,
-        userId: data.user_id,
-        name: data.name,
-        description: data.description,
-        constraints: {
-          budgetLimit: Number(data.budget_limit),
-          maxLatencyMs: Number(data.max_latency_ms),
-          maxSpaceUnits: data.max_space_units,
-          requiredCompliance: data.required_compliance,
-          maxImplementationMonths: data.max_implementation_months,
-          priorityWeights: data.priority_weights,
-        },
-        simulationResults: data.simulation_results,
-        createdAt: data.created_at,
-      };
     }
 
     memoryScenarios.set(id, newRecord);
@@ -950,11 +1042,13 @@ export const dbStore = {
         .order('created_at', { ascending: true });
 
       if (error) {
-        console.error('Supabase listOptions error:', error.message);
-        throw new Error(`Database error listing options: ${error.message}`);
-      }
-
-      if (data && data.length > 0) {
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase listOptions error:', error.message);
+          throw new Error(`Database error listing options: ${error.message}`);
+        }
+      } else if (data && data.length > 0) {
         return data.map((d: any) => ({
           id: d.id,
           workspaceId: d.workspace_id,
@@ -991,7 +1085,6 @@ export const dbStore = {
 
   async setOptions(workspaceId: string, options: any[]): Promise<any[]> {
     if (isSupabaseConfigured && supabase) {
-      // Clear existing options for workspace and re-insert
       await supabase.from('decision_options').delete().eq('workspace_id', workspaceId);
 
       const rows = options.map(opt => ({
@@ -1026,11 +1119,15 @@ export const dbStore = {
       const { data, error } = await supabase.from('decision_options').insert(rows).select();
 
       if (error) {
-        console.error('Supabase setOptions error:', error.message);
-        throw new Error(`Database error saving decision options: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase setOptions error:', error.message);
+          throw new Error(`Database error saving decision options: ${error.message}`);
+        }
+      } else {
+        return data;
       }
-
-      return data;
     }
 
     memoryOptions.set(workspaceId, options);
@@ -1049,21 +1146,25 @@ export const dbStore = {
         .eq('workspace_id', workspaceId);
 
       if (error) {
-        console.error('Supabase listEvidenceRelationships error:', error.message);
-        throw new Error(`Database error listing relationships: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase listEvidenceRelationships error:', error.message);
+          throw new Error(`Database error listing relationships: ${error.message}`);
+        }
+      } else {
+        return (data || []).map((r: any) => ({
+          id: r.id,
+          workspaceId: r.workspace_id,
+          sourceClaimId: r.source_claim_id,
+          targetClaimId: r.target_claim_id,
+          relationshipType: r.relationship_type,
+          severity: r.severity,
+          impactNotes: r.impact_notes,
+          resolutionStatus: r.resolution_status,
+          createdAt: r.created_at,
+        }));
       }
-
-      return (data || []).map((r: any) => ({
-        id: r.id,
-        workspaceId: r.workspace_id,
-        sourceClaimId: r.source_claim_id,
-        targetClaimId: r.target_claim_id,
-        relationshipType: r.relationship_type,
-        severity: r.severity,
-        impactNotes: r.impact_notes,
-        resolutionStatus: r.resolution_status,
-        createdAt: r.created_at,
-      }));
     }
 
     return Array.from(memoryRelationships.values()).filter(r => r.workspaceId === workspaceId);
@@ -1085,27 +1186,31 @@ export const dbStore = {
           relationship_type: rel.relationshipType,
           severity: rel.severity,
           impact_notes: rel.impactNotes,
-          resolution_status: rel.resolutionStatus,
+          resolutionStatus: rel.resolutionStatus,
         })
         .select()
         .single();
 
       if (error) {
-        console.error('Supabase createEvidenceRelationship error:', error.message);
-        throw new Error(`Database error creating relationship: ${error.message}`);
+        if (isMissingTableError(error)) {
+          // Fall through
+        } else {
+          console.error('Supabase createEvidenceRelationship error:', error.message);
+          throw new Error(`Database error creating relationship: ${error.message}`);
+        }
+      } else {
+        return {
+          id: data.id,
+          workspaceId: data.workspace_id,
+          sourceClaimId: data.source_claim_id,
+          targetClaimId: data.target_claim_id,
+          relationshipType: data.relationship_type,
+          severity: data.severity,
+          impactNotes: data.impact_notes,
+          resolutionStatus: data.resolution_status,
+          createdAt: data.created_at,
+        };
       }
-
-      return {
-        id: data.id,
-        workspaceId: data.workspace_id,
-        sourceClaimId: data.source_claim_id,
-        targetClaimId: data.target_claim_id,
-        relationshipType: data.relationship_type,
-        severity: data.severity,
-        impactNotes: data.impact_notes,
-        resolutionStatus: data.resolution_status,
-        createdAt: data.created_at,
-      };
     }
 
     memoryRelationships.set(id, newRecord);
