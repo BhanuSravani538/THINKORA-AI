@@ -133,7 +133,16 @@ const server = app.listen(env.PORT, async () => {
   } catch (err: any) {
     console.warn(`⚠️ Background initialization notice: ${err?.message || err}`);
   }
-  console.log(`======================================================\n`);
+});
+
+server.on('error', (err: any) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ [ERROR] Port ${env.PORT} is already in use.`);
+    console.error(`Another process is already running on port ${env.PORT}. Please terminate that process or set a different PORT in .env.\n`);
+  } else {
+    console.error(`\n❌ [ERROR] Server error:`, err);
+  }
+  process.exit(1);
 });
 
 // Graceful termination
