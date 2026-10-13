@@ -14,11 +14,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://thinkora-ai-k7k5.onrender.com',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:5000',
         changeOrigin: true,
-        secure: true,
+        secure: false,
       },
     },
   },
 })
-

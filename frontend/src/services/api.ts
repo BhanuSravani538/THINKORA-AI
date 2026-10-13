@@ -2,16 +2,28 @@ import { DocumentItem, ResearchWorkspace } from '../types';
 
 /**
  * Resolves the API Base URL.
- * In production (Vercel), uses import.meta.env.VITE_API_URL pointing to the deployed Render backend.
- * In development, falls back to relative '/api' proxied by Vite to http://localhost:5000.
+ * In development, defaults to local backend at http://localhost:5000 (or relative '/api' proxied by Vite).
+ * In production (Vercel), defaults to the deployed Render backend URL.
  */
 export function getApiBaseUrl(): string {
   const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+
+  // If running in development mode (localhost)
+  if (import.meta.env.DEV) {
+    if (envUrl && (envUrl.includes('localhost') || envUrl.includes('127.0.0.1') || envUrl.startsWith('http://'))) {
+      const cleanUrl = envUrl.replace(/\/+$/, '');
+      return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+    }
+    // Default to relative '/api' proxied to local backend
+    return '/api';
+  }
+
+  // In production builds (Vercel)
   if (envUrl) {
     const cleanUrl = envUrl.replace(/\/+$/, '');
     return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
   }
-  return '/api';
+  return 'https://thinkora-ai-k7k5.onrender.com/api';
 }
 
 export class ApiError extends Error {
@@ -36,6 +48,42 @@ function getAuthHeaders(): Record<string, string> {
     headers['Authorization'] = `Bearer ${token}`;
   }
   return headers;
+}
+
+/**
+ * Safely parses response body as JSON.
+ * If response is HTML or plain text (e.g. reverse proxy errors), extracts meaningful error.
+ */
+async function parseJsonResponse(response: Response): Promise<any> {
+  let rawText = '';
+  try {
+    rawText = await response.text();
+  } catch {
+    return { error: response.statusText || `HTTP ${response.status}` };
+  }
+
+  if (!rawText || !rawText.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    // If not JSON, extract clean message from HTML or status code
+    const titleMatch = rawText.match(/<title>([^<]+)<\/title>/i);
+    const h1Match = rawText.match(/<h1>([^<]+)<\/h1>/i);
+    const cleanError =
+      (titleMatch && titleMatch[1].trim()) ||
+      (h1Match && h1Match[1].trim()) ||
+      (response.statusText && response.statusText.trim()) ||
+      `Server returned HTTP ${response.status}`;
+
+    return {
+      error: cleanError,
+      isHtmlResponse: true,
+      rawBody: rawText.slice(0, 300),
+    };
+  }
 }
 
 export const api = {
@@ -97,23 +145,16 @@ export const api = {
         method: 'POST',
         headers,
         body: formData,
-        // IMPORTANT: Do NOT manually set Content-Type header when using FormData;
-        // the browser must set 'multipart/form-data; boundary=...' automatically.
       });
     } catch (networkErr: any) {
       throw new ApiError(
-        `Network error: Unable to reach the THINKORA backend server at ${apiBase}. Please verify the server is running and CORS is configured. (${networkErr.message})`,
+        `Network error: Unable to reach backend at ${apiBase}. If running locally, make sure your backend is started with "npm start" on port 5000. (${networkErr.message})`,
         503
       );
     }
 
     // 4. Handle HTTP Response
-    let data: any;
-    try {
-      data = await response.json();
-    } catch {
-      data = { error: response.statusText || 'Unexpected server response format' };
-    }
+    const data = await parseJsonResponse(response);
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -130,9 +171,25 @@ export const api = {
         const message = data.error || `Target research workspace "${workspaceId}" was not found or access is unauthorized.`;
         throw new ApiError(message, 404);
       }
+      if (response.status === 502) {
+        throw new ApiError(
+          'Backend is currently unavailable or spinning up (502 Bad Gateway). Please ensure the backend is running locally with "npm start" or wait for Render to initialize.',
+          502
+        );
+      }
+      if (response.status === 504) {
+        throw new ApiError('Gateway timeout (504): Document processing took longer than expected.', 504);
+      }
 
       throw new ApiError(
         data.error || `Server error (${response.status}) occurred while processing the document.`,
+        response.status
+      );
+    }
+
+    if (!data || !data.data) {
+      throw new ApiError(
+        data?.message || `Server responded with HTTP ${response.status} but did not return document data.`,
         response.status
       );
     }
@@ -156,12 +213,12 @@ export const api = {
         },
       });
 
+      const json = await parseJsonResponse(response);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new ApiError(errorData.error || `Failed to fetch workspaces (${response.status})`, response.status);
+        throw new ApiError(json.error || `Failed to fetch workspaces (${response.status})`, response.status);
       }
 
-      const json = await response.json();
       return (json.data || []).map((w: any) => ({
         id: w.id,
         name: w.name,
@@ -215,7 +272,7 @@ export const api = {
       }),
     });
 
-    const data = await response.json().catch(() => ({}));
+    const data = await parseJsonResponse(response);
     if (!response.ok) {
       throw new ApiError(data.error || 'Failed to create workspace on server', response.status, data.details);
     }
@@ -256,8 +313,8 @@ export const api = {
     });
 
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new ApiError(data.error || 'Failed to delete workspace', response.status);
+      const data = await parseJsonResponse(response);
+      throw new ApiError(data.error || `Failed to delete workspace (${response.status})`, response.status);
     }
 
     return true;
@@ -270,10 +327,9 @@ export const api = {
     const apiBase = getApiBaseUrl();
     try {
       const res = await fetch(`${apiBase}/health`);
-      return await res.json();
+      return await parseJsonResponse(res);
     } catch (err: any) {
       return { status: 'offline', error: err.message, apiBase };
     }
   },
 };
-
